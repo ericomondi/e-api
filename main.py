@@ -46,24 +46,14 @@ def require_admin(user: user_dependency):
 @app.get("/public/products", response_model=PaginatedProductResponse, status_code=status.HTTP_200_OK)
 async def browse_products(db: db_dependency, search: str = None, page: int = 1, limit: int = 10):
     try:
-        # Calculate skip based on page and limit
         skip = (page - 1) * limit
-
-        # Build query
         query = db.query(models.Products)
         if search:
             query = query.filter(models.Products.name.ilike(f"%{search}%"))
             logger.info(f"Product search query: {search}")
-
-        # Get total count for pagination metadata
         total = query.count()
-
-        # Fetch products with pagination
         products = query.offset(skip).limit(limit).all()
-
-        # Calculate total pages
         total_pages = ceil(total / limit)
-
         return {
             "items": products,
             "total": total,
@@ -119,24 +109,14 @@ async def add_product(user: user_dependency, db: db_dependency, create_product: 
 async def fetch_products(user: user_dependency, db: db_dependency, search: str = None, page: int = 1, limit: int = 10):
     require_admin(user)
     try:
-        # Calculate skip based on page and limit
         skip = (page - 1) * limit
-
-        # Build query
         query = db.query(models.Products).filter(models.Products.user_id == user.get("id"))
         if search:
             query = query.filter(models.Products.name.ilike(f"%{search}%"))
             logger.info(f"Admin product search query: {search}")
-
-        # Get total count for pagination metadata
         total = query.count()
-
-        # Fetch products with pagination
         products = query.offset(skip).limit(limit).all()
-
-        # Calculate total pages
         total_pages = ceil(total / limit)
-
         return {
             "items": products,
             "total": total,
@@ -203,7 +183,7 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
             product = db.query(models.Products).filter_by(id=item.id).first()
             if not product:
                 db.rollback()
-                raise HTTPException(status_code=404, detail=f"Product ID {item.id} not found")
+                raise HttpException(status_code=404, detail=f"Product ID {item.id} not found")
             quantity = Decimal(str(item.quantity))
             if product.stock_quantity < quantity:
                 db.rollback()
