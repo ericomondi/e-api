@@ -59,10 +59,10 @@ class CartPayload(BaseModel):
 
 class OrderDetailResponse(BaseModel):
     order_detail_id: int
-    product_id: Optional[int]  # Allow None for missing products
+    product_id: Optional[int]
     quantity: float
     total_price: float
-    product: Optional[ProductResponse]  # Allow None for missing products
+    product: Optional[ProductResponse]
 
 class OrderResponse(BaseModel):
     order_id: int
@@ -93,3 +93,10 @@ class UpdateProduct(BaseModel):
     stock_quantity: Optional[float]
     barcode: Optional[int]
     category_id: Optional[int]
+
+class PaginatedProductResponse(BaseModel):
+    items: List[ProductResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int

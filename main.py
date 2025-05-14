@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, status
 from pydantic_models import (
     ProductsBase, CartPayload, CartItem, UpdateProduct, CategoryBase, CategoryResponse,
-    ProductResponse, OrderResponse, OrderDetailResponse, Role
+    ProductResponse, OrderResponse, OrderDetailResponse, Role, PaginatedProductResponse
 )
 from typing import Annotated, List
 import models
@@ -17,6 +17,7 @@ import logging
 from dotenv import load_dotenv
 import os
 from decimal import Decimal
+from math import ceil
 
 load_dotenv()
 
@@ -42,11 +43,34 @@ def require_admin(user: user_dependency):
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
-@app.get("/public/products", response_model=List[ProductResponse], status_code=status.HTTP_200_OK)
-async def browse_products(db: db_dependency, skip: int = 0, limit: int = 10):
+@app.get("/public/products", response_model=PaginatedProductResponse, status_code=status.HTTP_200_OK)
+async def browse_products(db: db_dependency, search: str = None, page: int = 1, limit: int = 10):
     try:
-        products = db.query(models.Products).offset(skip).limit(limit).all()
-        return products
+        # Calculate skip based on page and limit
+        skip = (page - 1) * limit
+
+        # Build query
+        query = db.query(models.Products)
+        if search:
+            query = query.filter(models.Products.name.ilike(f"%{search}%"))
+            logger.info(f"Product search query: {search}")
+
+        # Get total count for pagination metadata
+        total = query.count()
+
+        # Fetch products with pagination
+        products = query.offset(skip).limit(limit).all()
+
+        # Calculate total pages
+        total_pages = ceil(total / limit)
+
+        return {
+            "items": products,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": total_pages
+        }
     except SQLAlchemyError as e:
         logger.error(f"Error fetching products: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching products")
@@ -85,18 +109,41 @@ async def add_product(user: user_dependency, db: db_dependency, create_product: 
         db.add(add_product)
         db.commit()
         db.refresh(add_product)
-        return {"message": "Product added successfully"}
+        return {"message": "Product added successfully, {add_product.name}"}
     except SQLAlchemyError as e:
         db.rollback()
         logger.error(f"Error adding product: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/products", response_model=List[ProductResponse], status_code=status.HTTP_200_OK)
-async def fetch_products(user: user_dependency, db: db_dependency, skip: int = 0, limit: int = 10):
+@app.get("/products", response_model=PaginatedProductResponse, status_code=status.HTTP_200_OK)
+async def fetch_products(user: user_dependency, db: db_dependency, search: str = None, page: int = 1, limit: int = 10):
     require_admin(user)
     try:
-        products = db.query(models.Products).filter(models.Products.user_id == user.get("id")).offset(skip).limit(limit).all()
-        return products
+        # Calculate skip based on page and limit
+        skip = (page - 1) * limit
+
+        # Build query
+        query = db.query(models.Products).filter(models.Products.user_id == user.get("id"))
+        if search:
+            query = query.filter(models.Products.name.ilike(f"%{search}%"))
+            logger.info(f"Admin product search query: {search}")
+
+        # Get total count for pagination metadata
+        total = query.count()
+
+        # Fetch products with pagination
+        products = query.offset(skip).limit(limit).all()
+
+        # Calculate total pages
+        total_pages = ceil(total / limit)
+
+        return {
+            "items": products,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": total_pages
+        }
     except SQLAlchemyError as e:
         logger.error(f"Error fetching products: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching products")
@@ -143,7 +190,6 @@ async def delete_product(product_id: int, db: db_dependency, user: user_dependen
         logger.error(f"Error deleting product: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-        
 @app.post("/create_order", status_code=status.HTTP_201_CREATED)
 async def create_order(db: db_dependency, user: user_dependency, order_payload: CartPayload):
     try:
