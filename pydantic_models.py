@@ -43,7 +43,8 @@ class ProductsBase(BaseModel):
     stock_quantity: float
     barcode: int
     category_id: Optional[int]
-    brand: Optional[str]  # New optional brand field
+    brand: Optional[str]
+    description: Optional[str]  # New description field
 
 class ProductResponse(ProductsBase):
     id: int
@@ -94,7 +95,8 @@ class UpdateProduct(BaseModel):
     stock_quantity: Optional[float]
     barcode: Optional[int]
     category_id: Optional[int]
-    brand: Optional[str]  # New optional brand field
+    brand: Optional[str]
+    description: Optional[str]  # New description field
 
 class PaginatedProductResponse(BaseModel):
     items: List[ProductResponse]
