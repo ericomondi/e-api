@@ -55,7 +55,7 @@ class Orders(Base):
     order_id = Column(Integer, primary_key=True, index=True)
     total = Column(Numeric(precision=14, scale=2))
     datetime = Column(DateTime, default=func.now(), index=True)
-    status = Column(Enum(OrderStatus), default=Order poetStatus.PENDING, nullable=False)
+    status = Column(Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False)
     user_id = Column(Integer, ForeignKey('users.id'))
     user = relationship("Users", back_populates="orders")
     order_details = relationship("OrderDetails", back_populates="order")
