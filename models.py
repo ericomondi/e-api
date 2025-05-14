@@ -40,11 +40,12 @@ class Products(Base):
     price = Column(Numeric(precision=14, scale=2), nullable=False)
     img_url = Column(String(200), nullable=True)
     stock_quantity = Column(Numeric(precision=14, scale=2), nullable=False)
+    description = Column(String(200), nullable=True)  # New description field
     created_at = Column(DateTime, default=func.now())
     barcode = Column(Numeric(precision=12), unique=True)
     user_id = Column(Integer, ForeignKey('users.id'))
     category_id = Column(Integer, ForeignKey('categories.id'))
-    brand = Column(String(100), nullable=True)  # New optional brand field
+    brand = Column(String(100), nullable=True)
     user = relationship("Users", back_populates="products")
     category = relationship("Categories", back_populates="products")
     order_details = relationship("OrderDetails", back_populates="product")
@@ -54,7 +55,7 @@ class Orders(Base):
     order_id = Column(Integer, primary_key=True, index=True)
     total = Column(Numeric(precision=14, scale=2))
     datetime = Column(DateTime, default=func.now(), index=True)
-    status = Column(Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False)
+    status = Column(Enum(OrderStatus), default=Order poetStatus.PENDING, nullable=False)
     user_id = Column(Integer, ForeignKey('users.id'))
     user = relationship("Users", back_populates="orders")
     order_details = relationship("OrderDetails", back_populates="order")
