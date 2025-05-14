@@ -44,6 +44,7 @@ class Products(Base):
     barcode = Column(Numeric(precision=12), unique=True)
     user_id = Column(Integer, ForeignKey('users.id'))
     category_id = Column(Integer, ForeignKey('categories.id'))
+    brand = Column(String(100), nullable=True)  # New optional brand field
     user = relationship("Users", back_populates="products")
     category = relationship("Categories", back_populates="products")
     order_details = relationship("OrderDetails", back_populates="product")

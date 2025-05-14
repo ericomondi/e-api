@@ -109,7 +109,7 @@ async def add_product(user: user_dependency, db: db_dependency, create_product: 
         db.add(add_product)
         db.commit()
         db.refresh(add_product)
-        return {"message": "Product added successfully, {add_product.name}"}
+        return {"message": "Product added successfully"}
     except SQLAlchemyError as e:
         db.rollback()
         logger.error(f"Error adding product: {str(e)}")
