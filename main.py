@@ -6,7 +6,7 @@ from pydantic_models import (
 from typing import Annotated, List
 import models
 from database import engine, db_dependency
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 import auth
 from auth import get_active_user
@@ -132,6 +132,9 @@ async def delete_product(product_id: int, db: db_dependency, user: user_dependen
         ).first()
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
+        order_details = db.query(models.OrderDetails).filter(models.OrderDetails.product_id == product_id).first()
+        if order_details:
+            raise HTTPException(status_code=400, detail="Cannot delete product with existing orders")
         db.delete(product)
         db.commit()
         return {"message": "Product deleted successfully"}
@@ -140,6 +143,7 @@ async def delete_product(product_id: int, db: db_dependency, user: user_dependen
         logger.error(f"Error deleting product: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+        
 @app.post("/create_order", status_code=status.HTTP_201_CREATED)
 async def create_order(db: db_dependency, user: user_dependency, order_payload: CartPayload):
     try:
@@ -154,7 +158,7 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
             if not product:
                 db.rollback()
                 raise HTTPException(status_code=404, detail=f"Product ID {item.id} not found")
-            quantity = Decimal(str(item.quantity))  # Convert float to Decimal
+            quantity = Decimal(str(item.quantity))
             if product.stock_quantity < quantity:
                 db.rollback()
                 raise HTTPException(status_code=400, detail=f"Insufficient stock for product {product.name}")
@@ -189,7 +193,18 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
 @app.get("/orders", response_model=List[OrderResponse], status_code=status.HTTP_200_OK)
 async def fetch_orders(user: user_dependency, db: db_dependency, skip: int = 0, limit: int = 10):
     try:
-        orders = db.query(models.Orders).filter(models.Orders.user_id == user.get("id")).offset(skip).limit(limit).all()
+        orders = (
+            db.query(models.Orders)
+            .filter(models.Orders.user_id == user.get("id"))
+            .options(joinedload(models.Orders.order_details).joinedload(models.OrderDetails.product))
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+        for order in orders:
+            for detail in order.order_details:
+                if detail.product is None:
+                    logger.warning(f"Order {order.order_id} has order_detail {detail.order_detail_id} with missing product (product_id={detail.product_id})")
         return orders
     except SQLAlchemyError as e:
         logger.error(f"Error fetching orders: {str(e)}")

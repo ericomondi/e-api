@@ -52,21 +52,21 @@ class ProductResponse(ProductsBase):
 
 class CartItem(BaseModel):
     id: int
-    quantity: float  # Will be converted to Decimal in endpoint
+    quantity: float
 
 class CartPayload(BaseModel):
     cart: List[CartItem]
 
 class OrderDetailResponse(BaseModel):
     order_detail_id: int
-    product_id: int
-    quantity: float  # Converted to float for JSON serialization
-    total_price: float  # Converted to float for JSON serialization
-    product: ProductResponse
+    product_id: Optional[int]  # Allow None for missing products
+    quantity: float
+    total_price: float
+    product: Optional[ProductResponse]  # Allow None for missing products
 
 class OrderResponse(BaseModel):
     order_id: int
-    total: float  # Converted to float for JSON serialization
+    total: float
     datetime: datetime
     status: OrderStatus
     user_id: int
