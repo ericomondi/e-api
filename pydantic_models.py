@@ -104,3 +104,7 @@ class PaginatedProductResponse(BaseModel):
     page: int
     limit: int
     pages: int
+
+class ImageResponse(BaseModel):
+    message: str
+    img_url: str
