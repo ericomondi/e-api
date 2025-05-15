@@ -1,7 +1,7 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File
 from pydantic_models import (
     ProductsBase, CartPayload, CartItem, UpdateProduct, CategoryBase, CategoryResponse,
-    ProductResponse, OrderResponse, OrderDetailResponse, Role, PaginatedProductResponse
+    ProductResponse, OrderResponse, OrderDetailResponse, Role, PaginatedProductResponse, ImageResponse
 )
 from typing import Annotated, List
 import models
@@ -18,6 +18,8 @@ from dotenv import load_dotenv
 import os
 from decimal import Decimal
 from math import ceil
+import uuid
+from pathlib import Path
 
 load_dotenv()
 
@@ -42,6 +44,44 @@ def require_admin(user: user_dependency):
     if user.get("role") != Role.ADMIN:
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
+
+# Ensure uploads directory exists
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+@app.post("/upload-image", response_model=ImageResponse, status_code=status.HTTP_201_CREATED)
+async def upload_image(user: user_dependency, file: UploadFile = File(...)):
+    require_admin(user)
+    try:
+        # Validate file type
+        if not file.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Only image files are allowed")
+        
+        # Validate file size (e.g., max 5MB)
+        max_size = 5 * 1024 * 1024  # 5MB in bytes
+        content = await file.read()
+        if len(content) > max_size:
+            raise HTTPException(status_code=400, detail="File size exceeds 5MB limit")
+        
+        # Generate unique filename
+        file_extension = file.filename.split(".")[-1].lower()
+        if file_extension not in ["jpg", "jpeg", "png", "gif"]:
+            raise HTTPException(status_code=400, detail="Unsupported image format")
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+        file_path = UPLOAD_DIR / unique_filename
+        
+        # Save file
+        with file_path.open("wb") as f:
+            f.write(content)
+        
+        # Generate URL (assuming static file serving or CDN in production)
+        img_url = f"/uploads/{unique_filename}"
+        
+        logger.info(f"Image uploaded: {unique_filename} by user {user.get('id')}")
+        return {"message": "Image uploaded successfully", "img_url": img_url}
+    except Exception as e:
+        logger.error(f"Error uploading image: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error uploading image")
 
 @app.get("/public/products", response_model=PaginatedProductResponse, status_code=status.HTTP_200_OK)
 async def browse_products(db: db_dependency, search: str = None, page: int = 1, limit: int = 10):
@@ -183,7 +223,7 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
             product = db.query(models.Products).filter_by(id=item.id).first()
             if not product:
                 db.rollback()
-                raise HttpException(status_code=404, detail=f"Product ID {item.id} not found")
+                raise HTTPException(status_code=404, detail=f"Product ID {item.id} not found")
             quantity = Decimal(str(item.quantity))
             if product.stock_quantity < quantity:
                 db.rollback()
