@@ -164,6 +164,7 @@ async def forgot_password(forgot_password_request: ForgotPasswordRequest, db: db
     await fm.send_message(message)
     logger.info(f"Password reset email sent to: {email}")
     return {"message": "Password reset email sent"}
+    
 
 @router.post("/reset-password/{token}", status_code=status.HTTP_200_OK)
 async def reset_password(token: str, reset_password_request: ResetPasswordRequest, db: db_dependency):
