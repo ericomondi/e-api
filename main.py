@@ -20,6 +20,7 @@ from decimal import Decimal
 from math import ceil
 import uuid
 from pathlib import Path
+from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
@@ -39,6 +40,8 @@ app.add_middleware(
 )
 
 user_dependency = Annotated[dict, Depends(get_active_user)]
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 def require_admin(user: user_dependency):
     if user.get("role") != Role.ADMIN:
@@ -104,6 +107,18 @@ async def browse_products(db: db_dependency, search: str = None, page: int = 1, 
     except SQLAlchemyError as e:
         logger.error(f"Error fetching products: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching products")
+
+@app.get("/public/products/{product_id}", response_model=ProductResponse, status_code=status.HTTP_200_OK)
+async def get_product_by_id(product_id: int, db: db_dependency):
+    try:
+        product = db.query(models.Products).filter(models.Products.id == product_id).first()
+        if not product:
+            logger.info(f"Product not found: ID {product_id}")
+            raise HTTPException(status_code=404, detail="Product not found")
+        return product
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching product by ID {product_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching product")
 
 @app.get("/public/categories", response_model=List[CategoryResponse], status_code=status.HTTP_200_OK)
 async def browse_categories(db: db_dependency):
