@@ -58,8 +58,10 @@ class Orders(Base):
     datetime = Column(DateTime, default=func.now(), index=True)
     status = Column(Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False)
     user_id = Column(Integer, ForeignKey('users.id'))
+    address_id = Column(Integer, ForeignKey('addresses.id'), nullable=True)
     user = relationship("Users", back_populates="orders")
     order_details = relationship("OrderDetails", back_populates="order")
+    address = relationship("Address")
 
 class OrderDetails(Base):
     __tablename__ = "order_details"
@@ -84,3 +86,4 @@ class Address(Base):
     created_at = Column(DateTime, default=func.now())
     
     user = relationship("Users", back_populates="addresses")
+    orders = relationship("Orders", back_populates="address")  

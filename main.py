@@ -361,6 +361,37 @@ async def get_addresses(user: user_dependency, db: db_dependency):
         logger.error(f"Error fetching addresses: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching addresses")
 
+
+@app.delete("/addresses/{address_id}", status_code=status.HTTP_200_OK)
+async def delete_address(address_id: int, user: user_dependency, db: db_dependency):
+    try:
+        address = db.query(models.Address).filter(
+            models.Address.id == address_id,
+            models.Address.user_id == user.get("id")
+        ).first()
+        if not address:
+            logger.info(f"Address not found: ID {address_id} for user {user.get('id')}")
+            raise HTTPException(status_code=404, detail="Address not found")
+        
+        # Check if address is used in any orders
+        order = db.query(models.Orders).filter(
+            models.Orders.address_id == address_id
+        ).first()
+        if order:
+            logger.info(f"Cannot delete address {address_id}: used in order {order.order_id}")
+            raise HTTPException(status_code=400, detail="Cannot delete address used in orders")
+        
+        db.delete(address)
+        db.commit()
+        logger.info(f"Address {address_id} deleted by user {user.get('id')}")
+        return {"message": "Address deleted successfully"}
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Error deleting address {address_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error deleting address")
+
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
