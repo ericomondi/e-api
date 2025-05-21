@@ -108,3 +108,23 @@ class PaginatedProductResponse(BaseModel):
 class ImageResponse(BaseModel):
     message: str
     img_url: str
+
+
+class AddressBase(BaseModel):
+    phone_number: str
+    street: str
+    city: str
+    postal_code: str
+    country: str
+    is_default: bool = False
+
+class AddressCreate(AddressBase):
+    pass
+
+class AddressResponse(AddressBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True

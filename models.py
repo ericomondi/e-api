@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, func, DateTime, Numeric, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, func, DateTime, Numeric, ForeignKey, Enum, Boolean
 from database import Base
 from sqlalchemy.orm import relationship
 import enum
@@ -24,6 +24,7 @@ class Users(Base):
     created_at = Column(DateTime, default=func.now())
     orders = relationship("Orders", back_populates="user")
     products = relationship("Products", back_populates="user")
+    addresses = relationship("Address", back_populates="user")
 
 class Categories(Base):
     __tablename__ = 'categories'
@@ -69,3 +70,17 @@ class OrderDetails(Base):
     total_price = Column(Numeric(precision=15, scale=2))
     product = relationship("Products", back_populates="order_details")
     order = relationship("Orders", back_populates="order_details")
+
+class Address(Base):
+    __tablename__ = 'addresses'
+    id = Column(Integer, primary_key=True, index=True)
+    phone_number = Column(String(20), nullable=False)
+    street = Column(String(200), nullable=False)
+    city = Column(String(100), nullable=False)
+    postal_code = Column(String(20), nullable=False)
+    country = Column(String(100), nullable=False)
+    is_default = Column(Boolean, default=False, nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    created_at = Column(DateTime, default=func.now())
+    
+    user = relationship("Users", back_populates="addresses")

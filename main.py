@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File
 from pydantic_models import (
     ProductsBase, CartPayload, CartItem, UpdateProduct, CategoryBase, CategoryResponse,
-    ProductResponse, OrderResponse, OrderDetailResponse, Role, PaginatedProductResponse, ImageResponse
+    ProductResponse, OrderResponse, OrderDetailResponse, Role, PaginatedProductResponse,
+     ImageResponse, AddressCreate, AddressResponse
 )
 from typing import Annotated, List
 import models
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 app.include_router(auth.router)
-models.Base.metadata.create_all(bind=engine)
+models.Base.metadata.create_all(bind=engine) 
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,9 +40,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 user_dependency = Annotated[dict, Depends(get_active_user)]
 
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 def require_admin(user: user_dependency):
     if user.get("role") != Role.ADMIN:
@@ -51,6 +52,9 @@ def require_admin(user: user_dependency):
 # Ensure uploads directory exists
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 
 @app.post("/upload-image", response_model=ImageResponse, status_code=status.HTTP_201_CREATED)
 async def upload_image(user: user_dependency, file: UploadFile = File(...)):
@@ -312,6 +316,50 @@ async def dashboard(user: user_dependency, db: db_dependency):
     except SQLAlchemyError as e:
         logger.error(f"Error fetching dashboard data: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching dashboard data")
+
+
+ 
+
+# Create Address endpoint
+@app.post("/addresses", response_model=AddressResponse, status_code=status.HTTP_201_CREATED)
+async def create_address(user: user_dependency, db: db_dependency, address: AddressCreate):
+    try:
+        # If setting as default, unset other default addresses for this user
+        if address.is_default:
+            db.query(models.Address).filter(
+                models.Address.user_id == user.get("id"),
+                models.Address.is_default == True
+            ).update({"is_default": False})
+        
+        db_address = models.Address(
+            **address.dict(),
+            user_id=user.get("id")
+        )
+        db.add(db_address)
+        db.commit()
+        db.refresh(db_address)
+        logger.info(f"Address created for user {user.get('id')}: Address ID {db_address.id}")
+        return db_address
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Error creating address: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error creating address")
+
+# Get Addresses endpoint
+@app.get("/addresses", response_model=List[AddressResponse], status_code=status.HTTP_200_OK)
+async def get_addresses(user: user_dependency, db: db_dependency):
+    try:
+        addresses = db.query(models.Address).filter(
+            models.Address.user_id == user.get("id")
+        ).all()
+        if not addresses:
+            logger.info(f"No addresses found for user {user.get('id')}")
+            return []
+        logger.info(f"Retrieved {len(addresses)} addresses for user {user.get('id')}")
+        return addresses
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching addresses: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching addresses")
 
 if __name__ == "__main__":
     import uvicorn
