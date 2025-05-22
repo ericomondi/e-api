@@ -76,14 +76,16 @@ class OrderDetails(Base):
 class Address(Base):
     __tablename__ = 'addresses'
     id = Column(Integer, primary_key=True, index=True)
+    first_name = Column(String(100), nullable=False)  
+    last_name = Column(String(100), nullable=False)  
     phone_number = Column(String(20), nullable=False)
-    street = Column(String(200), nullable=False)
+    address = Column(String(100), nullable=False)  
+    additional_info = Column(String(255), nullable=True) 
+    region = Column(String(100), nullable=True)  # New field for Regions
     city = Column(String(100), nullable=False)
-    postal_code = Column(String(20), nullable=False)
-    country = Column(String(100), nullable=False)
     is_default = Column(Boolean, default=False, nullable=False)
     user_id = Column(Integer, ForeignKey('users.id'))
     created_at = Column(DateTime, default=func.now())
     
     user = relationship("Users", back_populates="addresses")
-    orders = relationship("Orders", back_populates="address")  
+    orders = relationship("Orders", back_populates="address") 

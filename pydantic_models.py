@@ -109,13 +109,14 @@ class ImageResponse(BaseModel):
     message: str
     img_url: str
 
-
 class AddressBase(BaseModel):
+    first_name: str
+    last_name: str
     phone_number: str
-    street: str
-    city: str
-    postal_code: str
-    country: str
+    address: str
+    additional_info: Optional[str] 
+    region: str
+    city: str 
     is_default: bool = False
 
 class AddressCreate(AddressBase):
@@ -125,6 +126,6 @@ class AddressResponse(AddressBase):
     id: int
     user_id: int
     created_at: datetime
-    
+
     class Config:
-        from_attributes = True
+        from_attributes = True  # Enables ORM compatibility for SQLAlchemy models

@@ -88,6 +88,7 @@ async def register_admin(db: db_dependency, create_user_request: CreateUserReque
     logger.info(f"Admin {create_user_request.username} registered successfully")
     return {"message": "Admin created successfully"}
 
+
 def authenticate_user(email: str, password: str, db: Session):
     user = db.query(Users).filter(Users.email == email).first()
     if not user:
