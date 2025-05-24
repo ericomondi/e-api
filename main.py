@@ -229,10 +229,20 @@ async def delete_product(product_id: int, db: db_dependency, user: user_dependen
         logger.error(f"Error deleting product: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/create_order", status_code=status.HTTP_201_CREATED)
 async def create_order(db: db_dependency, user: user_dependency, order_payload: CartPayload):
     try:
-        new_order = models.Orders(user_id=user.get("id"), total=0)
+        address_id = order_payload.address_id
+        if address_id:
+            address = db.query(models.Address).filter(
+                models.Address.id == address_id,
+                models.Address.user_id == user.get("id")
+            ).first()
+            if not address:
+                raise HTTPException(status_code=400, detail="Invalid address ID")
+        
+        new_order = models.Orders(user_id=user.get("id"), total=0, address_id=address_id)
         db.add(new_order)
         db.commit()
         db.refresh(new_order)
