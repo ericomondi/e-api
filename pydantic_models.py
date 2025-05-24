@@ -58,7 +58,8 @@ class CartItem(BaseModel):
 
 class CartPayload(BaseModel):
     cart: List[CartItem]
-
+    address_id: Optional[int] = None
+    
 class OrderDetailResponse(BaseModel):
     order_detail_id: int
     product_id: Optional[int]
