@@ -1,10 +1,10 @@
-from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Query
 from pydantic_models import (
     ProductsBase, CartPayload, CartItem, UpdateProduct, CategoryBase, CategoryResponse,
     ProductResponse, OrderResponse, OrderDetailResponse, Role, PaginatedProductResponse,
-     ImageResponse, AddressCreate, AddressResponse
+     ImageResponse, AddressCreate, AddressResponse, PaginatedOrderResponse, OrderStatus
 )
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 import models
 from database import engine, db_dependency
 from sqlalchemy.orm import Session, joinedload
@@ -285,25 +285,44 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
         logger.error(f"Invalid quantity value: {str(e)}")
         raise HTTPException(status_code=400, detail="Invalid quantity value")
 
-@app.get("/orders", response_model=List[OrderResponse], status_code=status.HTTP_200_OK)
-async def fetch_orders(user: user_dependency, db: db_dependency, skip: int = 0, limit: int = 10):
+
+
+@app.get("/orders", response_model=PaginatedOrderResponse, status_code=status.HTTP_200_OK)
+async def fetch_orders(
+    user: user_dependency,
+    db: db_dependency,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    status: Optional[OrderStatus] = None
+):
     try:
+        query = db.query(models.Orders).filter(models.Orders.user_id == user.get("id"))
+        if status:
+            query = query.filter(models.Orders.status == status)
+        
+        total = query.count()
         orders = (
-            db.query(models.Orders)
-            .filter(models.Orders.user_id == user.get("id"))
+            query
             .options(joinedload(models.Orders.order_details).joinedload(models.OrderDetails.product))
             .offset(skip)
             .limit(limit)
             .all()
         )
-        for order in orders:
-            for detail in order.order_details:
-                if detail.product is None:
-                    logger.warning(f"Order {order.order_id} has order_detail {detail.order_detail_id} with missing product (product_id={detail.product_id})")
-        return orders
+        page = (skip // limit) + 1
+        pages = ceil(total / limit) if limit > 0 else 0
+        return {
+            "items": orders,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": pages
+        }
     except SQLAlchemyError as e:
-        logger.error(f"Error fetching orders: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching orders")
+
+
+
+
 
 @app.get("/dashboard", status_code=status.HTTP_200_OK)
 async def dashboard(user: user_dependency, db: db_dependency):

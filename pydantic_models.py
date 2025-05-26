@@ -67,13 +67,9 @@ class OrderDetailResponse(BaseModel):
     total_price: float
     product: Optional[ProductResponse]
 
-class OrderResponse(BaseModel):
-    order_id: int
-    total: float
-    datetime: datetime
-    status: OrderStatus
-    user_id: int
-    order_details: List[OrderDetailResponse]
+    class Config:
+        from_attributes = True
+
 
 class TokenVerifyRequest(BaseModel):
     token: str
@@ -130,3 +126,25 @@ class AddressResponse(AddressBase):
 
     class Config:
         from_attributes = True  # Enables ORM compatibility for SQLAlchemy models
+
+
+class OrderResponse(BaseModel):
+    order_id: int
+    total: float
+    datetime: datetime
+    status: OrderStatus
+    user_id: int
+    order_details: List[OrderDetailResponse]
+    address: Optional[AddressResponse]
+
+    class Config:
+        from_attributes = True
+
+
+class PaginatedOrderResponse(BaseModel):
+    items: List[OrderResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int
+
