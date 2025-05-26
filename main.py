@@ -321,6 +321,51 @@ async def fetch_orders(
         raise HTTPException(status_code=500, detail="Error fetching orders")
 
 
+@app.get("/orders/{order_id}", response_model=OrderResponse, status_code=status.HTTP_200_OK)
+async def get_order_by_id(
+    order_id: int,
+    user: user_dependency,
+    db: db_dependency
+):
+    """
+    Fetch a specific order by ID for the authenticated user
+    """
+    try:
+        order = (
+            db.query(models.Orders)
+            .filter(
+                models.Orders.order_id == order_id,
+                models.Orders.user_id == user.get("id")
+            )
+            .options(
+                joinedload(models.Orders.order_details).joinedload(models.OrderDetails.product),
+                joinedload(models.Orders.address)
+            )
+            .first()
+        )
+        
+        if not order:
+            logger.info(f"Order not found: ID {order_id} for user {user.get('id')}")
+            raise HTTPException(status_code=404, detail="Order not found")
+        
+        logger.info(f"Retrieved order {order_id} for user {user.get('id')}")
+        return order
+        
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching order {order_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching order")
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
