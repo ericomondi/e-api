@@ -59,6 +59,7 @@ class CartItem(BaseModel):
 class CartPayload(BaseModel):
     cart: List[CartItem]
     address_id: Optional[int] = None
+    delivery_fee: float = 0.0
     
 class OrderDetailResponse(BaseModel):
     order_detail_id: int
@@ -134,6 +135,8 @@ class OrderResponse(BaseModel):
     datetime: datetime
     status: OrderStatus
     user_id: int
+    delivery_fee: float
+    completed_at: Optional[datetime]
     order_details: List[OrderDetailResponse]
     address: Optional[AddressResponse]
 

@@ -242,7 +242,13 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
             if not address:
                 raise HTTPException(status_code=400, detail="Invalid address ID")
         
-        new_order = models.Orders(user_id=user.get("id"), total=0, address_id=address_id)
+        delivery_fee = Decimal(str(order_payload.delivery_fee))
+        new_order = models.Orders(
+            user_id=user.get("id"),
+            total=0,
+            address_id=address_id,
+            delivery_fee=delivery_fee
+        )
         db.add(new_order)
         db.commit()
         db.refresh(new_order)
@@ -268,7 +274,7 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
             product.stock_quantity -= quantity
             db.add(order_detail)
         
-        new_order.total = total_cost
+        new_order.total = total_cost + new_order.delivery_fee
         db.commit()
         
         logger.info(f"Order {new_order.order_id} created for user {user.get('id')}")
@@ -357,7 +363,43 @@ async def get_order_by_id(
 
 
 
-
+# New endpoint to update order status
+@app.put("/update-order-status/{order_id}", status_code=status.HTTP_200_OK)
+async def update_order_status(
+    order_id: int,
+    new_status: OrderStatus,
+    user: user_dependency,
+    db: db_dependency
+):
+    """
+    Update the status of an order and set completed_at if status is DELIVERED
+    """
+    try:
+        require_admin(user)  # Only admins can update order status
+        order = db.query(models.Orders).filter(models.Orders.order_id == order_id).first()
+        if not order:
+            logger.info(f"Order not found: ID {order_id}")
+            raise HTTPException(status_code=404, detail="Order not found")
+        
+        # Update status
+        order.status = new_status
+        
+        # Set completed_at if status is DELIVERED
+        if new_status == OrderStatus.DELIVERED:
+            order.completed_at = func.now()
+        elif order.completed_at and new_status != OrderStatus.DELIVERED:
+            # Optionally clear completed_at if status changes away from DELIVERED
+            order.completed_at = None
+        
+        db.commit()
+        db.refresh(order)
+        
+        logger.info(f"Order {order_id} status updated to {new_status} by user {user.get('id')}")
+        return {"message": f"Order status updated to {new_status}"}
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Error updating order status for order {order_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating order status")
 
 
 

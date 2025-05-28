@@ -57,9 +57,12 @@ class Orders(Base):
     status = Column(Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False)
     user_id = Column(Integer, ForeignKey('users.id'))
     address_id = Column(Integer, ForeignKey('addresses.id'), nullable=True)
+    delivery_fee = Column(Numeric(precision=14, scale=2), nullable=False, default=0)
+    completed_at = Column(DateTime, nullable=True)
     user = relationship("Users", back_populates="orders")
     order_details = relationship("OrderDetails", back_populates="order")
     address = relationship("Address")
+
 
 class OrderDetails(Base):
     __tablename__ = "order_details"
