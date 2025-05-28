@@ -10,8 +10,6 @@ class Role(str, Enum):
 
 class OrderStatus(str, Enum):
     PENDING = "pending"
-    PROCESSING = "processing"
-    SHIPPED = "shipped"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
 
@@ -60,6 +58,7 @@ class CartPayload(BaseModel):
     cart: List[CartItem]
     address_id: Optional[int] = None
     delivery_fee: float = 0.0
+    transaction_id: Optional[int] = None  
     
 class OrderDetailResponse(BaseModel):
     order_detail_id: int
@@ -151,3 +150,52 @@ class PaginatedOrderResponse(BaseModel):
     limit: int
     pages: int
 
+
+
+class InitiatePaymentRequest(BaseModel):
+    party_a: str
+    party_b: str
+    account_reference: str
+    transaction_category: int
+    transaction_type: int
+    transaction_channel: int
+    transaction_aggregator: int
+    transaction_details: str
+
+
+class PaymentCallbackRequest(BaseModel):
+    transaction_id: str
+    status: str  # e.g., "success", "failed"
+
+
+# Pydantic model for user details in the response
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: str
+
+    class Config:
+        from_attributes = True
+
+# Extend OrderResponse to exclude order_details and include user
+class OrderWithUserResponse(BaseModel):
+    order_id: int
+    total: float
+    datetime: datetime
+    status: OrderStatus
+    user_id: int
+    delivery_fee: float
+    completed_at: Optional[datetime]
+    address: Optional[AddressResponse]
+    user: UserResponse
+
+    class Config:
+        from_attributes = True
+
+# Pydantic model for paginated response
+class PaginatedOrderWithUserResponse(BaseModel):
+    items: List[OrderWithUserResponse]
+    total: int
+    page: int
+    limit: int
+    pages: int

@@ -2,8 +2,8 @@ from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Q
 from pydantic_models import (
     ProductsBase, CartPayload, CartItem, UpdateProduct, CategoryBase, CategoryResponse,
     ProductResponse, OrderResponse, OrderDetailResponse, Role, PaginatedProductResponse,
-     ImageResponse, AddressCreate, AddressResponse, PaginatedOrderResponse, OrderStatus
-)
+     ImageResponse, AddressCreate, AddressResponse, PaginatedOrderResponse, OrderStatus, InitiatePaymentRequest,
+      PaymentCallbackRequest, PaginatedOrderWithUserResponse)
 from typing import Annotated, List, Optional
 import models
 from database import engine, db_dependency
@@ -43,11 +43,18 @@ app.add_middleware(
 
 user_dependency = Annotated[dict, Depends(get_active_user)]
 
-
 def require_admin(user: user_dependency):
-    if user.get("role") != Role.ADMIN:
+    print(f"User role: {user.get('role')}")
+    try:
+        user_role = Role(user.get("role"))  # Convert string to Role enum
+    except ValueError:
+        # Handle case where role is not a valid enum value
+        raise HTTPException(status_code=403, detail="Invalid role")
+    if user_role != Role.ADMIN:  # Compare enum members
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
+
+
 
 # Ensure uploads directory exists
 UPLOAD_DIR = Path("uploads")
@@ -233,6 +240,7 @@ async def delete_product(product_id: int, db: db_dependency, user: user_dependen
 @app.post("/create_order", status_code=status.HTTP_201_CREATED)
 async def create_order(db: db_dependency, user: user_dependency, order_payload: CartPayload):
     try:
+        # Validate address if provided
         address_id = order_payload.address_id
         if address_id:
             address = db.query(models.Address).filter(
@@ -242,17 +250,22 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
             if not address:
                 raise HTTPException(status_code=400, detail="Invalid address ID")
         
+        # Convert delivery fee to Decimal for precise arithmetic
         delivery_fee = Decimal(str(order_payload.delivery_fee))
+        
+        # Create new order with default status PENDING
         new_order = models.Orders(
             user_id=user.get("id"),
             total=0,
             address_id=address_id,
-            delivery_fee=delivery_fee
+            delivery_fee=delivery_fee,
+            status=OrderStatus.PENDING  # Initial status
         )
         db.add(new_order)
         db.commit()
         db.refresh(new_order)
         
+        # Process cart items and calculate total cost
         total_cost = Decimal('0')
         for item in order_payload.cart:
             product = db.query(models.Products).filter_by(id=item.id).first()
@@ -264,6 +277,7 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
                 db.rollback()
                 raise HTTPException(status_code=400, detail=f"Insufficient stock for product {product.name}")
             
+            # Create order detail entry
             order_detail = models.OrderDetails(
                 order_id=new_order.order_id,
                 product_id=product.id,
@@ -274,7 +288,28 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
             product.stock_quantity -= quantity
             db.add(order_detail)
         
+        # Update order total with cart total plus delivery fee
         new_order.total = total_cost + new_order.delivery_fee
+        
+        # Handle transaction linking if transaction_id is provided
+        if order_payload.transaction_id:
+            transaction = db.query(models.Transactions).filter(
+                models.Transactions.id == order_payload.transaction_id,
+                models.Transactions.user_id == user.get("id"),
+                models.Transactions.order_id.is_(None),  # Ensure transaction isn't already linked
+                models.Transactions._status == 4  # ACCEPTED status
+            ).first()
+            if not transaction:
+                db.rollback()
+                raise HTTPException(status_code=400, detail="Invalid or already used transaction")
+            if transaction.transaction_amount < new_order.total:
+                db.rollback()
+                raise HTTPException(status_code=400, detail="Insufficient transaction amount")
+            # Link transaction to order and update status
+            transaction.order_id = new_order.order_id
+            new_order.status = OrderStatus.PROCESSING  # Payment confirmed, ready for processing
+        
+        # Commit all changes
         db.commit()
         
         logger.info(f"Order {new_order.order_id} created for user {user.get('id')}")
@@ -403,14 +438,6 @@ async def update_order_status(
 
 
 
-
-
-
-
-
-
-
-
 @app.get("/dashboard", status_code=status.HTTP_200_OK)
 async def dashboard(user: user_dependency, db: db_dependency):
     require_admin(user)
@@ -508,6 +535,166 @@ async def delete_address(address_id: int, user: user_dependency, db: db_dependen
 
 
 
+
+
+
+@app.post("/orders/{order_id}/initiate_payment", status_code=status.HTTP_201_CREATED)
+async def initiate_payment(
+    order_id: int,
+    payment_request: InitiatePaymentRequest,
+    user: user_dependency,
+    db: db_dependency
+):
+    # Verify order exists and belongs to the user
+    order = db.query(Orders).filter(
+        Orders.order_id == order_id,
+        Orders.user_id == user.get("id")
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # Create transaction
+    transaction = Transactions(
+        _pid=f"TRX-{uuid.uuid4()}",
+        party_a=payment_request.party_a,
+        party_b=payment_request.party_b,
+        account_reference=payment_request.account_reference,
+        transaction_category=payment_request.transaction_category,
+        transaction_type=payment_request.transaction_type,
+        transaction_channel=payment_request.transaction_channel,
+        transaction_aggregator=payment_request.transaction_aggregator,
+        transaction_amount=order.total,
+        transaction_details=payment_request.transaction_details,
+        _feedback={"initiated": True},
+        _status=0,  # PENDING
+        user_id=user.get("id"),
+        order_id=order_id
+    )
+    db.add(transaction)
+    db.commit()
+    db.refresh(transaction)
+
+    # Here, integrate with a payment gateway (e.g., send request and get transaction_id)
+    # For now, assume it returns a mock response
+    payment_response = {"transaction_id": f"TXN-{transaction.id}", "status": "pending"}
+
+    transaction.transaction_id = payment_response["transaction_id"]
+    db.commit()
+
+    return {
+        "message": "Payment initiated",
+        "transaction_id": transaction.transaction_id
+    }
+
+
+
+@app.post("/payment/callback", status_code=status.HTTP_200_OK)
+async def payment_callback(callback_data: PaymentCallbackRequest, db: db_dependency):
+    transaction = db.query(Transactions).filter(
+        Transactions.transaction_id == callback_data.transaction_id
+    ).first()
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Map payment gateway status to your constants
+    status_map = {
+        "success": 4,  # ACCEPTED
+        "failed": 3    # REJECTED
+    }
+    new_status = status_map.get(callback_data.status, 0)  # Default to PENDING if unknown
+    transaction._status = new_status
+    transaction._feedback = {"status": callback_data.status}
+
+    if new_status == 4 and transaction.order_id:  # ACCEPTED
+        order = db.query(Orders).filter(Orders.order_id == transaction.order_id).first()
+        order.status = OrderStatus.PROCESSING  # Update to PROCESSING or your desired status
+    elif new_status == 3 and transaction.order_id:  # REJECTED
+        order = db.query(Orders).filter(Orders.order_id == transaction.order_id).first()
+        order.status = OrderStatus.PENDING  # Keep PENDING or adjust as needed
+
+    db.commit()
+    return {"message": "Transaction updated"}
+
+
+
+@app.post("/transactions/create", status_code=status.HTTP_201_CREATED)
+async def create_transaction(
+    payment_request: InitiatePaymentRequest,
+    user: user_dependency,
+    db: db_dependency
+):
+    transaction = Transactions(
+        _pid=f"TRX-{uuid.uuid4()}",
+        party_a=payment_request.party_a,
+        party_b=payment_request.party_b,
+        account_reference=payment_request.account_reference,
+        transaction_category=payment_request.transaction_category,
+        transaction_type=payment_request.transaction_type,
+        transaction_channel=payment_request.transaction_channel,
+        transaction_aggregator=payment_request.transaction_aggregator,
+        transaction_amount=0,  # Amount to be set later or specified
+        transaction_details=payment_request.transaction_details,
+        _feedback={"initiated": True},
+        _status=0,  # PENDING
+        user_id=user.get("id"),
+        order_id=None  # No order yet
+    )
+    db.add(transaction)
+    db.commit()
+    db.refresh(transaction)
+
+    return {
+        "message": "Transaction created",
+        "transaction_id": transaction.id
+    }
+
+@app.get("/admin/orders", response_model=PaginatedOrderWithUserResponse, status_code=status.HTTP_200_OK)
+async def fetch_all_orders(
+    user: user_dependency,
+    db: db_dependency,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    status: Optional[OrderStatus] = None
+):
+    """
+    Fetch all orders with associated user and address details (admin only).
+    Supports pagination and optional status filtering.
+    Excludes order_details.
+    """
+    require_admin(user)
+    try:
+        query = db.query(models.Orders).join(models.Users, models.Orders.user_id == models.Users.id)
+        if status:
+            query = query.filter(models.Orders.status == status)
+        
+        total = query.count()
+        orders = (
+            query
+            .options(
+                joinedload(models.Orders.address),
+                joinedload(models.Orders.user)
+            )
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+        page = (skip // limit) + 1
+        pages = ceil(total / limit) if limit > 0 else 0
+
+        logger.info(f"Admin {user.get('id')} fetched {len(orders)} orders (page {page}, limit {limit})")
+        return {
+            "items": orders,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": pages
+        }
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching all orders: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching orders")
+        
+                
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
