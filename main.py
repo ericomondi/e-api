@@ -3,7 +3,7 @@ from pydantic_models import (
     ProductsBase, CartPayload, CartItem, UpdateProduct, CategoryBase, CategoryResponse,
     ProductResponse, OrderResponse, OrderDetailResponse, Role, PaginatedProductResponse,
      ImageResponse, AddressCreate, AddressResponse, PaginatedOrderResponse, OrderStatus, InitiatePaymentRequest,
-      PaymentCallbackRequest, PaginatedOrderWithUserResponse)
+      PaymentCallbackRequest, PaginatedOrderWithUserResponse, UpdateOrderStatusRequest)
 from typing import Annotated, List, Optional
 import models
 from database import engine, db_dependency
@@ -259,7 +259,7 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
             total=0,
             address_id=address_id,
             delivery_fee=delivery_fee,
-            status=OrderStatus.PENDING  # Initial status
+            status=OrderStatus.CANCELLED  # Initial status
         )
         db.add(new_order)
         db.commit()
@@ -399,10 +399,11 @@ async def get_order_by_id(
 
 
 # New endpoint to update order status
+
 @app.put("/update-order-status/{order_id}", status_code=status.HTTP_200_OK)
 async def update_order_status(
     order_id: int,
-    new_status: OrderStatus,
+    request: UpdateOrderStatusRequest,  # Accept body with "status"
     user: user_dependency,
     db: db_dependency
 ):
@@ -416,26 +417,25 @@ async def update_order_status(
             logger.info(f"Order not found: ID {order_id}")
             raise HTTPException(status_code=404, detail="Order not found")
         
-        # Update status
-        order.status = new_status
+        # Update status from the request body
+        order.status = request.status
         
         # Set completed_at if status is DELIVERED
-        if new_status == OrderStatus.DELIVERED:
+        if request.status == OrderStatus.DELIVERED:
             order.completed_at = func.now()
-        elif order.completed_at and new_status != OrderStatus.DELIVERED:
+        elif order.completed_at and request.status != OrderStatus.DELIVERED:
             # Optionally clear completed_at if status changes away from DELIVERED
             order.completed_at = None
         
         db.commit()
         db.refresh(order)
         
-        logger.info(f"Order {order_id} status updated to {new_status} by user {user.get('id')}")
-        return {"message": f"Order status updated to {new_status}"}
+        logger.info(f"Order {order_id} status updated to {request.status} by user {user.get('id')}")
+        return {"message": f"Order status updated to {request.status}"}
     except SQLAlchemyError as e:
         db.rollback()
         logger.error(f"Error updating order status for order {order_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Error updating order status")
-
 
 
 @app.get("/dashboard", status_code=status.HTTP_200_OK)

@@ -13,6 +13,11 @@ class OrderStatus(str, Enum):
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
 
+
+# Pydantic model for the request body
+class UpdateOrderStatusRequest(BaseModel):
+    status: OrderStatus  # Expect "status" in the body, matching frontend
+
 class CreateUserRequest(BaseModel):
     username: str
     email: EmailStr
