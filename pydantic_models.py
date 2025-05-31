@@ -12,6 +12,8 @@ class OrderStatus(str, Enum):
     PENDING = "pending"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
+    PROCESSING = "processing"
+
 
 
 # Pydantic model for the request body

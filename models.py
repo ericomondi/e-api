@@ -20,6 +20,7 @@ class OrderStatus(enum.Enum):
     PENDING = "pending"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
+    PROCESSING = "processing"
 
 class Users(Base):
     __tablename__ = 'users'
@@ -64,7 +65,7 @@ class Orders(Base):
     order_id = Column(Integer, primary_key=True, index=True)
     total = Column(Numeric(precision=14, scale=2))
     datetime = Column(DateTime, default=func.now(), index=True)
-    status = Column(Enum(OrderStatus), default=OrderStatus.CANCELLED, nullable=False)
+    status = Column(Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False)
     user_id = Column(Integer, ForeignKey('users.id'))
     address_id = Column(Integer, ForeignKey('addresses.id'), nullable=True)
     delivery_fee = Column(Numeric(precision=14, scale=2), nullable=False, default=0)

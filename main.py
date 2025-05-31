@@ -259,7 +259,7 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
             total=0,
             address_id=address_id,
             delivery_fee=delivery_fee,
-            status=OrderStatus.CANCELLED  # Initial status
+            status=OrderStatus.PENDING  # Initial status
         )
         db.add(new_order)
         db.commit()
