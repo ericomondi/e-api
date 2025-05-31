@@ -107,7 +107,7 @@ class Transaction(Base):
     __tablename__ = 'transactions'
     
     id = Column(Integer, primary_key=True, index=True)
-    _pid = Column(String(100), unique=True, nullable=False, index=True)
+    _pid = Column(Integer,ForeignKey('orders.order_id'), nullable=False, index=True)
     party_a = Column(String(100), nullable=False)
     party_b = Column(String(100), nullable=False)
     account_reference = Column(String(150), nullable=False)
@@ -125,7 +125,6 @@ class Transaction(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, onupdate=func.now())
     user_id = Column(Integer, ForeignKey('users.id'))
-    order_id = Column(Integer, ForeignKey('orders.order_id'), nullable=True)
     
     user = relationship("Users", back_populates="transactions")
     order = relationship("Orders", back_populates="transactions")

@@ -22,6 +22,7 @@ from math import ceil
 import uuid
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
+from lnmo import router as lnmo_router
 
 load_dotenv()
 
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 app.include_router(auth.router)
+app.include_router(lnmo_router)
 models.Base.metadata.create_all(bind=engine) 
 
 app.add_middleware(
