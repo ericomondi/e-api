@@ -1,8 +1,11 @@
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
-from typing import List, Optional
 from enum import Enum
 from decimal import Decimal
+from typing import Dict, Any, List, Optional
+from pydantic import Field
+
+
 
 class Role(str, Enum):
     ADMIN = "admin"
@@ -159,21 +162,6 @@ class PaginatedOrderResponse(BaseModel):
 
 
 
-class InitiatePaymentRequest(BaseModel):
-    party_a: str
-    party_b: str
-    account_reference: str
-    transaction_category: int
-    transaction_type: int
-    transaction_channel: int
-    transaction_aggregator: int
-    transaction_details: str
-
-
-class PaymentCallbackRequest(BaseModel):
-    transaction_id: str
-    status: str  # e.g., "success", "failed"
-
 
 # Pydantic model for user details in the response
 class UserResponse(BaseModel):
@@ -206,3 +194,69 @@ class PaginatedOrderWithUserResponse(BaseModel):
     page: int
     limit: int
     pages: int
+
+
+# Add these models to your existing pydantic_models.py file
+
+class TransactionStatus(str, Enum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    PROCESSED = "PROCESSED"
+    REJECTED = "REJECTED"
+    ACCEPTED = "ACCEPTED"
+
+class TransactionRequest(BaseModel):
+    amount: Decimal = Field(..., gt=0, description="Transaction amount")
+    phone_number: str = Field(..., min_length=10, max_length=15, description="Phone number in format 254XXXXXXXXX")
+    order_id: int = Field(..., description="Order ID to link the payment to")
+
+class QueryRequest(BaseModel):
+    checkout_request_id: str = Field(..., description="M-Pesa CheckoutRequestID")
+
+class APIResponse(BaseModel):
+    status: str
+    message: str
+    data: Dict[Any, Any] = {}
+
+class TransactionResponse(BaseModel):
+    id: int
+    _pid: int
+    party_a: str
+    party_b: str
+    account_reference: str
+    transaction_category: int
+    transaction_type: int
+    transaction_channel: int
+    transaction_aggregator: int
+    transaction_id: Optional[str]
+    transaction_amount: Decimal
+    transaction_code: Optional[str]
+    transaction_timestamp: datetime
+    transaction_details: str
+    _status: str
+    created_at: datetime
+    user_id: int
+
+    class Config:
+        from_attributes = True
+
+# M-Pesa Callback Models
+class CallbackMetadataItem(BaseModel):
+    name: str
+    value: Optional[str] = None
+
+class CallbackMetadata(BaseModel):
+    item: List[CallbackMetadataItem]
+
+class StkCallback(BaseModel):
+    merchantRequestID: str
+    checkoutRequestID: str
+    resultCode: int
+    resultDesc: str
+    callbackMetadata: Optional[CallbackMetadata] = None
+
+class CallbackBody(BaseModel):
+    stkCallback: StkCallback
+
+class CallbackRequest(BaseModel):
+    body: CallbackBody

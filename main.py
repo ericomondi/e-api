@@ -2,8 +2,8 @@ from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Q
 from pydantic_models import (
     ProductsBase, CartPayload, CartItem, UpdateProduct, CategoryBase, CategoryResponse,
     ProductResponse, OrderResponse, OrderDetailResponse, Role, PaginatedProductResponse,
-     ImageResponse, AddressCreate, AddressResponse, PaginatedOrderResponse, OrderStatus, InitiatePaymentRequest,
-      PaymentCallbackRequest, PaginatedOrderWithUserResponse, UpdateOrderStatusRequest)
+     ImageResponse, AddressCreate, AddressResponse, PaginatedOrderResponse, OrderStatus,
+       PaginatedOrderWithUserResponse, UpdateOrderStatusRequest)
 from typing import Annotated, List, Optional
 import models
 from database import engine, db_dependency
@@ -22,8 +22,7 @@ from math import ceil
 import uuid
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
-from lnmo import router as lnmo_router
-
+import lnmo
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
@@ -31,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 app.include_router(auth.router)
-app.include_router(lnmo_router)
+app.include_router(lnmo.router)
 models.Base.metadata.create_all(bind=engine) 
 
 app.add_middleware(
@@ -239,6 +238,14 @@ async def delete_product(product_id: int, db: db_dependency, user: user_dependen
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Add these imports to your existing main.py imports:
+import lnmo
+
+# Replace your existing router inclusion with:
+app.include_router(auth.router)
+app.include_router(lnmo.router)
+
+# Update your create_order function to handle the new transaction relationship:
 @app.post("/create_order", status_code=status.HTTP_201_CREATED)
 async def create_order(db: db_dependency, user: user_dependency, order_payload: CartPayload):
     try:
@@ -295,11 +302,11 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
         
         # Handle transaction linking if transaction_id is provided
         if order_payload.transaction_id:
-            transaction = db.query(models.Transactions).filter(
-                models.Transactions.id == order_payload.transaction_id,
-                models.Transactions.user_id == user.get("id"),
-                models.Transactions.order_id.is_(None),  # Ensure transaction isn't already linked
-                models.Transactions._status == 4  # ACCEPTED status
+            transaction = db.query(models.Transaction).filter(
+                models.Transaction.id == order_payload.transaction_id,
+                models.Transaction.user_id == user.get("id"),
+                models.Transaction.order_id.is_(None),  # Ensure transaction isn't already linked
+                models.Transaction._status == models.TransactionStatus.ACCEPTED  # ACCEPTED status
             ).first()
             if not transaction:
                 db.rollback()
@@ -328,6 +335,32 @@ async def create_order(db: db_dependency, user: user_dependency, order_payload: 
         logger.error(f"Invalid quantity value: {str(e)}")
         raise HTTPException(status_code=400, detail="Invalid quantity value")
 
+# Add a new endpoint to get available transactions for linking to orders
+@app.get("/available-transactions", status_code=status.HTTP_200_OK)
+async def get_available_transactions(user: user_dependency, db: db_dependency):
+    """Get user's accepted transactions that haven't been linked to orders yet"""
+    try:
+        transactions = db.query(models.Transaction).filter(
+            models.Transaction.user_id == user.get("id"),
+            models.Transaction._status == models.TransactionStatus.ACCEPTED,
+            models.Transaction.order_id.is_(None)  # Not yet linked to any order
+        ).all()
+        
+        return {
+            "transactions": [
+                {
+                    "id": t.id,
+                    "amount": float(t.transaction_amount),
+                    "transaction_code": t.transaction_code,
+                    "transaction_timestamp": t.transaction_timestamp,
+                    "account_reference": t.account_reference
+                }
+                for t in transactions
+            ]
+        }
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching available transactions: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching transactions")
 
 
 @app.get("/orders", response_model=PaginatedOrderResponse, status_code=status.HTTP_200_OK)
