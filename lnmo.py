@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic_models import TransactionRequest, QueryRequest, APIResponse, CallbackRequest
+from pydantic_models import TransactionRequest, QueryRequest, APIResponse, CallbackRequest , CheckTransactionStatus
 from database import db_dependency
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -372,4 +372,55 @@ async def get_user_transactions(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch transactions"
+        )
+
+
+
+@router.post("/transactions", status_code=status.HTTP_200_OK)
+async def get_transaction_by_order_id(
+    request: CheckTransactionStatus,
+    db: db_dependency
+):
+    """Get a single transaction by order_id"""
+    try:
+        transaction = db.query(models.Transaction).filter(
+            models.Transaction._pid == request.order_id
+        ).order_by(models.Transaction.created_at.desc()).first()
+        
+        if not transaction:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Transaction not found for the provided order_id"
+            )
+        
+        return {
+            "transaction": {
+                "id": transaction.id,
+                "order_id": transaction._pid,
+                "amount": float(transaction.transaction_amount),
+                "status": transaction._status.value,  # Enum value for status
+                "transaction_code": transaction.transaction_code,
+                "transaction_id": transaction.transaction_id,
+                "created_at": transaction.created_at,
+                "phone_number": transaction.party_a,
+                "party_b": transaction.party_b,
+                "account_reference": transaction.account_reference,
+                "transaction_category": transaction.transaction_category,
+                "transaction_type": transaction.transaction_type,
+                "transaction_channel": transaction.transaction_channel,
+                "transaction_aggregator": transaction.transaction_aggregator,
+                "transaction_timestamp": transaction.transaction_timestamp,
+                "transaction_details": transaction.transaction_details,
+                "feedback": transaction._feedback,
+                "updated_at": transaction.updated_at
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching transaction: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch transaction"
         )
