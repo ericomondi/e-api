@@ -238,13 +238,6 @@ async def delete_product(product_id: int, db: db_dependency, user: user_dependen
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Add these imports to your existing main.py imports:
-import lnmo
-
-# Replace your existing router inclusion with:
-app.include_router(auth.router)
-app.include_router(lnmo.router)
-
 # Update your create_order function to handle the new transaction relationship:
 @app.post("/create_order", status_code=status.HTTP_201_CREATED)
 async def create_order(db: db_dependency, user: user_dependency, order_payload: CartPayload):
