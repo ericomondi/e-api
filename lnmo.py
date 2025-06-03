@@ -1,58 +1,219 @@
-from datetime import datetime
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from database import db_dependency
-from models import Transaction, Orders, Users, TransactionStatus
-from pydantic_models import (
-    TransactionRequest, 
-    QueryRequest, 
-    APIResponse,
-    TransactionResponse,
-    CallbackRequest
-)
-from auth import get_active_user
+import os
 import requests
 import base64
-import os
-from dotenv import load_dotenv
-import logging
+from datetime import datetime
+from decimal import Decimal
+from typing import Dict, Any, Optional
 
-load_dotenv()
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic_models import TransactionRequest, QueryRequest, APIResponse, CallbackRequest
+from database import db_dependency
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+import models
+from auth import get_active_user
+import logging
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/lnmo", tags=["lnmo"])
+# Create router
+router = APIRouter(prefix="/payments", tags=["Payments"])
+
+# User dependency
+from typing import Annotated
+user_dependency = Annotated[dict, Depends(get_active_user)]
 
 class LNMORepository:
-    def __init__(self):
-        self.MPESA_LNMO_CONSUMER_KEY = os.getenv("MPESA_LNMO_CONSUMER_KEY", "LO5CCWw0F9QdXWVOMURJGUA8OIEGJ4kL53b2e5ZCm4nKCs7J")
-        self.MPESA_LNMO_CONSUMER_SECRET = os.getenv("MPESA_LNMO_CONSUMER_SECRET", "yWbM4wSsOY7CMK4vhdkCgVAcZiBFLA3FtNQV2E3M4odi9gEXXjaHkfcoH42rEsv6")
-        self.MPESA_LNMO_ENVIRONMENT = os.getenv("MPESA_LNMO_ENVIRONMENT", "sandbox")
-        self.MPESA_LNMO_PASS_KEY = os.getenv("MPESA_LNMO_PASS_KEY", "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919")
-        self.MPESA_LNMO_SHORT_CODE = os.getenv("MPESA_LNMO_SHORT_CODE", "174379")
-        self.CALLBACK_URL = os.getenv("MPESA_CALLBACK_URL", "https://225e-197-237-26-50.ngrok-free.app/lnmo/callback")
+    """MPESA LNMO Repository for handling M-Pesa payments"""
+    
+    # MPESA configurations from environment variables
+    MPESA_LNMO_CONSUMER_KEY = os.getenv("MPESA_LNMO_CONSUMER_KEY")
+    MPESA_LNMO_CONSUMER_SECRET = os.getenv("MPESA_LNMO_CONSUMER_SECRET")
+    MPESA_LNMO_ENVIRONMENT = os.getenv("MPESA_LNMO_ENVIRONMENT", "sandbox")
+    MPESA_LNMO_INITIATOR_PASSWORD = os.getenv("MPESA_LNMO_INITIATOR_PASSWORD")
+    MPESA_LNMO_INITIATOR_USERNAME = os.getenv("MPESA_LNMO_INITIATOR_USERNAME")
+    MPESA_LNMO_PASS_KEY = os.getenv("MPESA_LNMO_PASS_KEY")
+    MPESA_LNMO_SHORT_CODE = os.getenv("MPESA_LNMO_SHORT_CODE")
+    MPESA_LNMO_CALLBACK_URL = os.getenv("MPESA_CALLBACK_URL")
 
-    def generate_access_token(self) -> Optional[str]:
-        """Generate M-Pesa access token"""
+    def __init__(self):
+        # Validate required environment variables
+        required_vars = [
+            "MPESA_LNMO_CONSUMER_KEY", "MPESA_LNMO_CONSUMER_SECRET", 
+            "MPESA_LNMO_PASS_KEY", "MPESA_LNMO_SHORT_CODE", "MPESA_LNMO_CALLBACK_URL"
+        ]
+        for var in required_vars:
+            if not getattr(self, var):
+                raise ValueError(f"Missing required environment variable: {var}")
+
+    async def transact(self, data: Dict[str, Any], db: Session, user_id: int) -> Dict[str, Any]:
+        """Handle MPESA LNMO transaction"""
+        try:
+            endpoint = f"https://{self.MPESA_LNMO_ENVIRONMENT}.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
+            headers = {
+                "Authorization": "Bearer " + self.generate_access_token(),
+                "Content-Type": "application/json",
+            }
+            
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            payload = {
+                "BusinessShortCode": self.MPESA_LNMO_SHORT_CODE,
+                "Password": self.generate_password(),
+                "Timestamp": timestamp,
+                "TransactionType": "CustomerPayBillOnline",
+                "Amount": str(data["amount"]),
+                "PartyA": data["phone_number"],
+                "PartyB": self.MPESA_LNMO_SHORT_CODE,
+                "PhoneNumber": data["phone_number"],
+                "CallBackURL": self.MPESA_LNMO_CALLBACK_URL,
+                "AccountReference": str(data["order_id"]),
+                "TransactionDesc": f"Payment for order {data['order_id']}",
+            }
+
+            response = requests.post(endpoint, json=payload, headers=headers)
+            response_data = response.json()
+
+            # Save transaction to the database
+            transaction = models.Transaction(
+                _pid=data["order_id"],
+                party_a=data["phone_number"],
+                party_b=self.MPESA_LNMO_SHORT_CODE,
+                account_reference=str(data["order_id"]),
+                transaction_category=0,  # PURCHASE_ORDER
+                transaction_type=1,      # CREDIT
+                transaction_channel=1,   # LNMO
+                transaction_aggregator=0, # MPESA_KE
+                transaction_id=response_data.get("CheckoutRequestID"),
+                transaction_amount=Decimal(str(data["amount"])),
+                transaction_code=None,
+                transaction_timestamp=datetime.now(),
+                transaction_details=f"Payment for order {data['order_id']}",
+                _feedback=response_data,
+                _status=models.TransactionStatus.PROCESSING,
+                user_id=user_id,
+                # order_id=None  # Will be linked when order is created
+            )
+
+            db.add(transaction)
+            db.commit()
+            db.refresh(transaction)
+
+            logger.info(f"Transaction created: ID {transaction.id} for user {user_id}")
+            return response_data
+
+        except Exception as e:
+            logger.error(f"Error in transact: {str(e)}")
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Transaction failed: {str(e)}"
+            )
+
+    def query(self, transaction_id: str) -> Dict[str, Any]:
+        """Query MPESA LNMO transaction status"""
+        try:
+            endpoint = f"https://{self.MPESA_LNMO_ENVIRONMENT}.safaricom.co.ke/mpesa/stkpushquery/v1/query"
+            headers = {
+                "Authorization": "Bearer " + self.generate_access_token(),
+                "Content-Type": "application/json",
+            }
+            
+            payload = {
+                "BusinessShortCode": self.MPESA_LNMO_SHORT_CODE,
+                "Password": self.generate_password(),
+                "Timestamp": datetime.now().strftime("%Y%m%d%H%M%S"),
+                "CheckoutRequestID": transaction_id,
+            }
+
+            response = requests.post(endpoint, json=payload, headers=headers)
+            return response.json()
+            
+        except Exception as e:
+            logger.error(f"Error in query: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Query failed: {str(e)}"
+            )
+
+    async def callback(self, data: Dict[str, Any], db: Session) -> Dict[str, Any]:
+        """Handle MPESA callback"""
+        try:
+            checkout_request_id = data["body"]["stkCallback"]["checkoutRequestID"]
+
+            # Find the transaction in the database
+            transaction = db.query(models.Transaction).filter(
+                models.Transaction.transaction_id == checkout_request_id
+            ).first()
+
+            if transaction:
+                # Store the entire callback response in _feedback
+                transaction._feedback = data
+                # Get the ResultCode to determine success or failure
+                result_code = data["body"]["stkCallback"]["resultCode"]
+
+                if result_code == 0:
+                    # Transaction is successful
+                    transaction._status = models.TransactionStatus.ACCEPTED
+                    # Safely access CallbackMetadata
+                    callback_metadata = data["body"]["stkCallback"].get("callbackMetadata")
+                    if callback_metadata:
+                        items = callback_metadata.get("item", [])
+                        for item in items:
+                            if item.get("name") == "MpesaReceiptNumber" and "value" in item:
+                                transaction.transaction_code = item["value"]
+                                break
+                else:
+                    # Transaction failed
+                    transaction._status = models.TransactionStatus.REJECTED
+
+                db.commit()
+                logger.info(f"Transaction {transaction.id} updated via callback: status {transaction._status}")
+            else:
+                logger.warning(f"Transaction not found for checkout_request_id: {checkout_request_id}")
+
+            return data
+
+        except Exception as e:
+            logger.error(f"Error in callback: {str(e)}")
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Callback processing failed: {str(e)}"
+            )
+
+    def generate_access_token(self) -> str:
+        """Generate an access token for the MPESA API"""
         try:
             endpoint = f"https://{self.MPESA_LNMO_ENVIRONMENT}.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
             credentials = f"{self.MPESA_LNMO_CONSUMER_KEY}:{self.MPESA_LNMO_CONSUMER_SECRET}"
             encoded_credentials = base64.b64encode(credentials.encode()).decode()
-            headers = {"Authorization": f"Basic {encoded_credentials}"}
-            
+
+            headers = {
+                "Authorization": f"Basic {encoded_credentials}",
+                "Content-Type": "application/json",
+            }
+
             response = requests.get(endpoint, headers=headers)
-            response.raise_for_status()
-            
-            return response.json().get("access_token")
+            response_data = response.json()
+
+            if response.status_code == 200:
+                return response_data["access_token"]
+            else:
+                raise Exception(
+                    f"Failed to generate access token: {response_data.get('error_description', 'Unknown error')}"
+                )
+
         except Exception as e:
             logger.error(f"Error generating access token: {str(e)}")
-            return None
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate access token"
+            )
 
-    def generate_password(self) -> Optional[str]:
-        """Generate M-Pesa password"""
+    def generate_password(self) -> str:
+        """Generate a password for the MPESA API transaction"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             password = base64.b64encode(
@@ -61,252 +222,154 @@ class LNMORepository:
             return password
         except Exception as e:
             logger.error(f"Error generating password: {str(e)}")
-            return None
-
-    async def initiate_transaction(self, data: Dict[str, Any], db: Session, user_id: int) -> Dict[str, Any]:
-        """Initiate M-Pesa STK Push transaction"""
-        try:
-            # Validate that the order exists and belongs to the user
-            order = db.query(Orders).filter(
-                Orders.order_id == int(data["AccountReference"]),
-                Orders.user_id == user_id
-            ).first()
-            
-            if not order:
-                raise HTTPException(
-                    status_code=404, 
-                    detail="Order not found or doesn't belong to user"
-                )
-
-            endpoint = f"https://{self.MPESA_LNMO_ENVIRONMENT}.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
-            access_token = self.generate_access_token()
-            
-            if not access_token:
-                raise HTTPException(status_code=500, detail="Failed to get M-Pesa access token")
-
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            }
-
-            payload = {
-                "BusinessShortCode": self.MPESA_LNMO_SHORT_CODE,
-                "Password": self.generate_password(),
-                "Timestamp": datetime.now().strftime("%Y%m%d%H%M%S"),
-                "TransactionType": "CustomerPayBillOnline",
-                "Amount": str(int(data["Amount"])),  # Convert to integer for M-Pesa
-                "PartyA": data["PhoneNumber"],
-                "PartyB": self.MPESA_LNMO_SHORT_CODE,
-                "PhoneNumber": data["PhoneNumber"],
-                "CallBackURL": self.CALLBACK_URL,
-                "AccountReference": data["AccountReference"],
-                "TransactionDesc": f"Payment for order {data['AccountReference']}",
-            }
-
-            response = requests.post(endpoint, json=payload, headers=headers)
-            response.raise_for_status()
-            response_data = response.json()
-
-            # Create transaction record
-            transaction = Transaction(
-                _pid=int(data["AccountReference"]),  # This is the order_id
-                party_a=data["PhoneNumber"],
-                party_b=self.MPESA_LNMO_SHORT_CODE,
-                account_reference=data["AccountReference"],
-                transaction_category=0,  # PURCHASE_ORDER
-                transaction_type=1,      # CREDIT
-                transaction_channel=1,   # LNMO
-                transaction_aggregator=0, # MPESA_KE
-                transaction_id=response_data.get("CheckoutRequestID"),
-                transaction_amount=data["Amount"],
-                transaction_code=None,
-                transaction_timestamp=datetime.now(),
-                transaction_details=f"Payment for order {data['AccountReference']}",
-                _feedback=response_data,
-                _status=TransactionStatus.PROCESSING,
-                user_id=user_id
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate password"
             )
-            
-            db.add(transaction)
-            db.commit()
-            db.refresh(transaction)
-            
-            logger.info(f"Transaction initiated for order {data['AccountReference']} by user {user_id}")
-            return {
-                "transaction_id": transaction.id,
-                "checkout_request_id": response_data.get("CheckoutRequestID"),
-                "response_data": response_data
-            }
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"M-Pesa API error: {str(e)}")
-            raise HTTPException(status_code=500, detail="M-Pesa service unavailable")
-        except Exception as e:
-            logger.error(f"Transaction initiation error: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
 
-    async def query_transaction_status(self, checkout_request_id: str, db: Session) -> Dict[str, Any]:
-        """Query M-Pesa transaction status"""
-        try:
-            endpoint = f"https://{self.MPESA_LNMO_ENVIRONMENT}.safaricom.co.ke/mpesa/stkpushquery/v1/query"
-            access_token = self.generate_access_token()
-            
-            if not access_token:
-                raise HTTPException(status_code=500, detail="Failed to get M-Pesa access token")
-
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            }
-
-            payload = {
-                "BusinessShortCode": self.MPESA_LNMO_SHORT_CODE,
-                "Password": self.generate_password(),
-                "Timestamp": datetime.now().strftime("%Y%m%d%H%M%S"),
-                "CheckoutRequestID": checkout_request_id,
-            }
-
-            response = requests.post(endpoint, json=payload, headers=headers)
-            response.raise_for_status()
-            
-            return response.json()
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"M-Pesa query error: {str(e)}")
-            raise HTTPException(status_code=500, detail="M-Pesa service unavailable")
-        except Exception as e:
-            logger.error(f"Transaction query error: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
-
-# Initialize repository
+# Initialize the repository
 lnmo_repository = LNMORepository()
 
-@router.post("/transact", response_model=APIResponse, status_code=status.HTTP_200_OK)
+# =============================================================================
+# API ROUTES
+# =============================================================================
+
+@router.post("/lnmo/transact", response_model=APIResponse)
 async def initiate_payment(
-    transaction_data: TransactionRequest, 
-    db: db_dependency, 
-    user: dict = Depends(get_active_user)
+    transaction_data: TransactionRequest,
+    user: user_dependency,
+    db: db_dependency
 ):
-    """Initiate M-Pesa STK Push payment"""
+    """Initiate MPESA LNMO payment for an order"""
     try:
+        # Verify the order exists and belongs to the user
+        order = db.query(models.Orders).filter(
+            models.Orders.order_id == transaction_data.order_id,
+            models.Orders.user_id == user.get("id")
+        ).first()
+        
+        if not order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Order not found"
+            )
+        
+        # Check if order already has a successful payment
+        existing_transaction = db.query(models.Transaction).filter(
+            models.Transaction._pid == transaction_data.order_id,
+            models.Transaction._status == models.TransactionStatus.ACCEPTED
+        ).first()
+        
+        if existing_transaction:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Order already has a successful payment"
+            )
+
         data = {
-            "Amount": transaction_data.amount,
-            "PhoneNumber": transaction_data.phone_number,
-            "AccountReference": str(transaction_data.order_id)
+            "amount": transaction_data.amount,
+            "phone_number": transaction_data.phone_number,
+            "order_id": transaction_data.order_id
         }
         
-        response = await lnmo_repository.initiate_transaction(data, db, user.get("id"))
+        response = await lnmo_repository.transact(data, db, user.get("id"))
         
         return APIResponse(
             status="success",
-            message="Transaction initiated successfully",
+            message="Payment initiated successfully",
             data=response
         )
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Payment initiation error: {str(e)}")
+        logger.error(f"Error initiating payment: {str(e)}")
         raise HTTPException(
-            status_code=500, 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to initiate payment"
         )
 
-@router.post("/query", response_model=APIResponse, status_code=status.HTTP_200_OK)
-async def query_transaction(
-    query_data: QueryRequest, 
-    db: db_dependency, 
-    user: dict = Depends(get_active_user)
-):
-    """Query M-Pesa transaction status"""
-    try:
-        # Verify the transaction belongs to the user
-        transaction = db.query(Transaction).filter(
-            Transaction.transaction_id == query_data.checkout_request_id,
-            Transaction.user_id == user.get("id")
-        ).first()
-        
-        if not transaction:
-            raise HTTPException(status_code=404, detail="Transaction not found")
 
-        response = await lnmo_repository.query_transaction_status(query_data.checkout_request_id, db)
+@router.post("/lnmo/query", response_model=APIResponse)
+async def query_payment(
+    query_data: QueryRequest,
+    user: user_dependency
+):
+    """Query MPESA LNMO transaction status"""
+    try:
+        response = lnmo_repository.query(query_data.checkout_request_id)
         
         return APIResponse(
             status="success",
-            message="Transaction status retrieved",
+            message="Query completed successfully",
             data=response
         )
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Transaction query error: {str(e)}")
+        logger.error(f"Error querying payment: {str(e)}")
         raise HTTPException(
-            status_code=500, 
-            detail="Failed to query transaction"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to query payment"
         )
 
-@router.post("/callback", status_code=status.HTTP_200_OK)
-async def payment_callback(callback_data: CallbackRequest, db: db_dependency):
-    """Handle M-Pesa payment callback"""
-    try:
-        logger.info(f"Received M-Pesa callback: {callback_data}")
-        
-        # Extract relevant data from callback
-        checkout_request_id = callback_data.body.stkCallback.checkoutRequestID
-        result_code = callback_data.body.stkCallback.resultCode
-        
-        # Find the transaction
-        transaction = db.query(Transaction).filter(
-            Transaction.transaction_id == checkout_request_id
-        ).first()
-        
-        if not transaction:
-            logger.warning(f"Transaction not found for CheckoutRequestID: {checkout_request_id}")
-            return {"status": "error", "message": "Transaction not found"}
 
-        # Update transaction based on result code
-        if result_code == 0:  # Success
-            transaction._status = TransactionStatus.ACCEPTED
-            if hasattr(callback_data.body.stkCallback, 'callbackMetadata'):
-                # Extract transaction code if available
-                for item in callback_data.body.stkCallback.callbackMetadata.item:
-                    if item.name == "MpesaReceiptNumber":
-                        transaction.transaction_code = item.value
-                        break
-        else:  # Failed
-            transaction._status = TransactionStatus.REJECTED
+@router.post("/lnmo/callback")
+async def payment_callback(
+    callback_data: CallbackRequest,
+    db: db_dependency
+):
+    """Handle MPESA callback (webhook endpoint)"""
+    try:
+        logger.info(f"Received callback: {callback_data}")
         
-        # Update feedback with full callback data
-        transaction._feedback = callback_data.dict()
+        response = await lnmo_repository.callback(callback_data.dict(), db)
         
-        db.commit()
-        db.refresh(transaction)
-        
-        logger.info(f"Transaction {transaction.id} updated with status {transaction._status}")
-        
-        return {"status": "success", "message": "Callback processed"}
+        return {
+            "ResultCode": 0,
+            "ResultDesc": "Success"
+        }
         
     except Exception as e:
-        logger.error(f"Callback processing error: {str(e)}")
-        return {"status": "error", "message": "Callback processing failed"}
+        logger.error(f"Error processing callback: {str(e)}")
+        return {
+            "ResultCode": 1,
+            "ResultDesc": "Failed"
+        }
 
-@router.get("/transactions", response_model=list[TransactionResponse], status_code=status.HTTP_200_OK)
+
+@router.get("/transactions", status_code=status.HTTP_200_OK)
 async def get_user_transactions(
-    db: db_dependency, 
-    user: dict = Depends(get_active_user),
-    skip: int = 0,
-    limit: int = 10
+    user: user_dependency,
+    db: db_dependency
 ):
-    """Get user's transactions"""
+    """Get user's transaction history"""
     try:
-        transactions = db.query(Transaction).filter(
-            Transaction.user_id == user.get("id")
-        ).offset(skip).limit(limit).all()
+        transactions = db.query(models.Transaction).filter(
+            models.Transaction.user_id == user.get("id")
+        ).order_by(models.Transaction.created_at.desc()).all()
         
-        return transactions
+        return {
+            "transactions": [
+                {
+                    "id": t.id,
+                    "order_id": t._pid,
+                    "amount": float(t.transaction_amount),
+                    "status": t._status.value,
+                    "transaction_code": t.transaction_code,
+                    "transaction_id": t.transaction_id,
+                    "created_at": t.created_at,
+                    "phone_number": t.party_a
+                }
+                for t in transactions
+            ]
+        }
         
     except Exception as e:
         logger.error(f"Error fetching transactions: {str(e)}")
         raise HTTPException(
-            status_code=500, 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch transactions"
         )
