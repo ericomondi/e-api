@@ -260,3 +260,7 @@ class CallbackBody(BaseModel):
 
 class CallbackRequest(BaseModel):
     body: CallbackBody
+
+
+class CheckTransactionStatus(BaseModel):
+    order_id: str  # Assuming order_id is a string; adjust type if needed
